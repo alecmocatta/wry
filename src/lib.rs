@@ -1397,11 +1397,12 @@ impl<'a> WebViewBuilder<'a> {
     self
   }
 
-  /// Set a new window request handler to decide if incoming url is allowed to be opened.
+  /// Set a handler for new windows requested by [`window.open`][window.open] or a link targeting a new window.
   ///
-  /// A new window is requested to be opened by the [window.open] API.
+  /// The handler receives the requested URL and window features and returns a [`NewWindowResponse`].
   ///
-  /// The closure take the URL to open and the window features object and returns [`NewWindowResponse`] to determine whether the window should open.
+  /// On iOS, handle the URL in the callback to present it. [`NewWindowResponse::Allow`]
+  /// uses WebKit's default of returning no new webview.
   ///
   /// [window.open]: https://developer.mozilla.org/en-US/docs/Web/API/Window/open
   pub fn with_new_window_req_handler(

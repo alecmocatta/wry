@@ -23,7 +23,10 @@ use objc2_web_kit::{
   WKFrameInfo, WKMediaCaptureType, WKPermissionDecision, WKSecurityOrigin, WKUIDelegate,
 };
 
-use crate::{NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse, WryWebView};
+use crate::{
+  NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse, WryWebView,
+  wkwebview::WKWebView,
+};
 
 #[cfg(target_os = "macos")]
 struct NewWindow {
@@ -80,7 +83,6 @@ impl WryNSWindowDelegate {
 }
 
 pub struct WryWebViewUIDelegateIvars {
-  #[cfg(target_os = "macos")]
   new_window_req_handler: Option<Box<dyn Fn(String, NewWindowFeatures) -> NewWindowResponse>>,
   #[cfg(target_os = "macos")]
   new_windows: Rc<RefCell<Vec<NewWindow>>>,
@@ -176,24 +178,20 @@ define_class!(
       (*decision_handler).call((decision,));
     }
 
-    #[cfg(target_os = "macos")]
     #[unsafe(method_id(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:))]
     unsafe fn create_web_view_for_navigation_action(
       &self,
-      webview: &WryWebView,
-      configuration: &objc2_web_kit::WKWebViewConfiguration,
+      _webview: &WryWebView,
+      _configuration: &objc2_web_kit::WKWebViewConfiguration,
       action: &objc2_web_kit::WKNavigationAction,
       window_features: &objc2_web_kit::WKWindowFeatures,
-    ) -> Option<Retained<objc2_web_kit::WKWebView>> {
-      if let Some(new_window_req_handler) = &self.ivars().new_window_req_handler {
+    ) -> Option<Retained<WKWebView>> {
+      let handler = self.ivars().new_window_req_handler.as_ref();
+      handler.and_then(|handler| {
         let request = unsafe { action.request() };
-        let url = request.URL().unwrap().absoluteString().unwrap();
+        let url = request.URL()?.absoluteString()?;
 
-        let current_window = webview.window().unwrap();
-        let screen = current_window.screen().unwrap();
-        let screen_frame = screen.frame();
-
-        match new_window_req_handler(
+        match handler(
           url.to_string(),
           NewWindowFeatures {
             size: if let (Some(width), Some(height)) =
@@ -214,13 +212,18 @@ define_class!(
               None
             },
             opener: crate::NewWindowOpener {
-              webview: webview.into(),
-              target_configuration: configuration.into(),
+              #[cfg(target_os = "macos")]
+              webview: _webview.into(),
+              #[cfg(target_os = "macos")]
+              target_configuration: _configuration.into(),
             },
           },
         ) {
+          #[cfg(target_os = "macos")]
           NewWindowResponse::Allow => {
             let mtm = MainThreadMarker::new().unwrap();
+            let current_window = _webview.window()?;
+            let screen_frame = current_window.screen()?.frame();
 
             let defaults = current_window.frame();
             let size = objc2_foundation::NSSize::new(
@@ -265,7 +268,7 @@ define_class!(
               objc2_web_kit::WKWebView::initWithFrame_configuration(
                 mtm.alloc::<objc2_web_kit::WKWebView>(),
                 window.frame(),
-                configuration,
+                _configuration,
               )
             };
 
@@ -292,12 +295,13 @@ define_class!(
 
             Some(webview)
           }
+          #[cfg(target_os = "macos")]
           NewWindowResponse::Create { webview } => Some(webview),
+          #[cfg(target_os = "ios")]
+          NewWindowResponse::Allow => None,
           NewWindowResponse::Deny => None,
         }
-      } else {
-        None
-      }
+      })
     }
   }
 );
@@ -308,13 +312,9 @@ impl WryWebViewUIDelegate {
     new_window_req_handler: Option<Box<dyn Fn(String, NewWindowFeatures) -> NewWindowResponse>>,
     permission_handler: Option<Box<dyn Fn(PermissionKind) -> PermissionResponse + Send + Sync>>,
   ) -> Retained<Self> {
-    #[cfg(target_os = "ios")]
-    let _new_window_req_handler = new_window_req_handler;
-
     let delegate = mtm
       .alloc::<WryWebViewUIDelegate>()
       .set_ivars(WryWebViewUIDelegateIvars {
-        #[cfg(target_os = "macos")]
         new_window_req_handler,
         #[cfg(target_os = "macos")]
         new_windows: Rc::new(RefCell::new(vec![])),
